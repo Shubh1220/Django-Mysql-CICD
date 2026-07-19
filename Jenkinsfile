@@ -1,106 +1,58 @@
-// Jenkins Declarative Pipeline
-// Flow: GitHub webhook -> Jenkins checkout -> build & test -> build Docker image
-//       -> push to registry -> deploy (docker-compose / remote host)
-//
-// Required Jenkins setup:
-//  1. Install plugins: Docker Pipeline, Git, Credentials Binding
-//  2. Add credentials in Jenkins (Manage Jenkins > Credentials):
-//       - "dockerhub-creds"   (Username/Password) for Docker Hub / registry
-//       - "deploy-server-ssh" (SSH Username with private key) for the deploy host
-//  3. Create a Multibranch/Pipeline job pointing at this repo, with a
-//     GitHub webhook (Settings > Webhooks) calling <jenkins-url>/github-webhook/
-//     so pushes trigger the pipeline automatically.
-
 pipeline {
-    agent any
-
-    environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
-        IMAGE_NAME             = "yourdockerhubuser/django-mysql-sampleapp"
-        IMAGE_TAG              = "${env.BUILD_NUMBER}"
-        DEPLOY_HOST            = "deploy@your-server-ip"
-    }
-
-    options {
-        timestamps()
-        disableConcurrentBuilds()
-    }
-
-    triggers {
-        // Fallback polling in case the webhook is not reachable (e.g. local Jenkins).
-        pollSCM('H/5 * * * *')
-    }
+    agent { label 'Shubh' }
 
     stages {
-
-        stage('Checkout') {
+        stage('Clone Code') {
             steps {
-                echo "🔄 Checking out source from GitHub..."
-                checkout scm
+                echo 'This is a cloning a code'
+                git url: 'https://github.com/Shubh1220/Django-Mysql-CICD.git', branch: 'main'
+                echo 'Cloning Code Successfully'
             }
         }
-
-        stage('Install & Unit Test') {
-            agent {
-                docker {
-                    image 'python:3.11-slim'
-                    args '-u root'
-                }
-            }
+        stage('Build Code') {
             steps {
-                sh '''
-                    apt-get update && apt-get install -y --no-install-recommends default-libmysqlclient-dev build-essential pkg-config
-                    pip install --no-cache-dir -r requirements.txt
-                    export DJANGO_SETTINGS_MODULE=config.settings
-                    export MYSQL_HOST=localhost
-                    python manage.py test notes --noinput || true
-                '''
+                echo 'This is a building a code'
+                sh 'docker build -t cicd-app:latest .'
+                echo 'Building Code Successfully'
             }
         }
-
-        stage('Build Docker Image') {
+        stage('Push to DockerHub') {
             steps {
-                echo "🐳 Building Docker image ${IMAGE_NAME}:${IMAGE_TAG}"
-                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                echo "📤 Pushing image to registry..."
-                sh '''
-                    echo "$DOCKERHUB_CREDENTIALS_PSW" | docker login -u "$DOCKERHUB_CREDENTIALS_USR" --password-stdin
-                    docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                    docker push ${IMAGE_NAME}:latest
-                '''
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                echo "🚀 Deploying to target server..."
-                sshagent(credentials: ['deploy-server-ssh']) {
+                echo 'This is a pushing a code'
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerHubCreds',
+                    usernameVariable: 'dockerHubUser',
+                    passwordVariable: 'dockerHubPass'
+                )]) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} "
-                            cd /opt/django-mysql-cicd &&
-                            docker pull ${IMAGE_NAME}:latest &&
-                            docker compose up -d --no-deps web
-                        "
+                        echo "$dockerHubPass" | docker login -u "$dockerHubUser" --password-stdin
+                        docker tag cicd-app:latest $dockerHubUser/cicd-app:latest
+                        docker push $dockerHubUser/cicd-app:latest
                     '''
                 }
+                echo 'Pushing Code Successfully'
+            }
+        }
+        stage('Deploy Code') {
+            steps {
+                echo 'This is a deploying a code'
+                sh 'docker compose down && docker compose up -d'
+                echo 'Deploying Code Successfully'
             }
         }
     }
-
     post {
         success {
-            echo "✅ Pipeline completed successfully — build #${env.BUILD_NUMBER} deployed."
+            echo '✅ CI/CD Pipeline completed successfully.'
         }
+
         failure {
-            echo "❌ Pipeline failed — check the stage logs above."
+            echo '❌ CI/CD Pipeline failed.'
         }
+
         always {
-            sh 'docker logout || true'
+            sh 'docker image prune -f || true'
         }
     }
+}
 }
