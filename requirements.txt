@@ -1,0 +1,4 @@
+Django==4.2.15
+mysqlclient==2.2.4
+gunicorn==22.0.0
+python-dotenv==1.0.1
